@@ -6,6 +6,8 @@ import uuid
 
 app = Flask(__name__)
 
+print("EXE PARSER")
+
 def analyze_pe_file(file_path):
     try:
         pe = pefile.PE(file_path)
@@ -41,16 +43,21 @@ def analyze_pe_file(file_path):
 def query_nvd_api(dll_name):
     try:
         url = f"https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch={dll_name}"
+        print("Querying NVD API for:", dll_name)  
+
         response = requests.get(url)
         if response.status_code == 200:
             data = response.json()
             vulnerabilities = [{"CVE_ID": entry["cve"]["CVE_data_meta"]["ID"]} for entry in data["result"]["CVE_Items"]]
+            print("Vulnerabilities found for", dll_name, ":", vulnerabilities)  
             return vulnerabilities
         else:
+            print("No vulnerabilities found for", dll_name) 
             return []
     except Exception as e:
         print(f"Error querying NVD API for {dll_name}: {e}")
         return []
+
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
