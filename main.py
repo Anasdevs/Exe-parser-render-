@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify
 import os
 import pefile
+import requests
 import uuid
 
 app = Flask(__name__)
@@ -26,13 +27,30 @@ def analyze_pe_file(file_path):
             functions = [imp.name.decode('utf-8') if imp.name else "Ordinal {}".format(imp.ordinal) for imp in entry.imports]
             dependencies.append({"DLL": dll_name, "Functions": functions})
 
-        print("Metadata:", metadata, "dependencies:", dependencies)
-        return {"Metadata": metadata, "Dependencies": dependencies}
+        vulnerabilities = []
+        for dependency in dependencies:
+            dll_name = dependency["DLL"]
+            vulnerability_info = query_nvd_api(dll_name)
+            vulnerabilities.append({"DLL": dll_name, "Vulnerabilities": vulnerability_info})
+
+        return {"Metadata": metadata, "Dependencies": dependencies, "Vulnerabilities": vulnerabilities}
 
     except Exception as e:
         return {"Error": str(e)}
-    
 
+def query_nvd_api(dll_name):
+    try:
+        url = f"https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch={dll_name}"
+        response = requests.get(url)
+        if response.status_code == 200:
+            data = response.json()
+            vulnerabilities = [{"CVE_ID": entry["cve"]["CVE_data_meta"]["ID"]} for entry in data["result"]["CVE_Items"]]
+            return vulnerabilities
+        else:
+            return []
+    except Exception as e:
+        print(f"Error querying NVD API for {dll_name}: {e}")
+        return []
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
@@ -67,5 +85,4 @@ def analyze():
         return jsonify({"Error": str(e)})
 
 if __name__ == '__main__':
-    # Run the app and listen on all network interfaces (0.0.0.0)
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=True, host='0.0.0.0')
