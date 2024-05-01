@@ -3,10 +3,22 @@ import os
 import pefile
 import requests
 import uuid
+import time
 
 app = Flask(__name__)
 
 print("EXE PARSER")
+
+import hashlib
+
+def calculate_hash(file_path):
+    """Calculate the SHA256 hash of a file."""
+    sha256_hash = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        for byte_block in iter(lambda: f.read(4096), b""):
+            sha256_hash.update(byte_block)
+    return sha256_hash.hexdigest()
+
 
 def analyze_pe_file(file_path):
     try:
@@ -35,6 +47,11 @@ def analyze_pe_file(file_path):
             vulnerability_info = query_nvd_api(dll_name)
             vulnerabilities.append({"DLL": dll_name, "Vulnerabilities": vulnerability_info})
 
+            # Calculate hash of the DLL
+            dll_file_path = os.path.join(os.path.dirname(file_path), dll_name)
+            dll_hash = calculate_hash(dll_file_path)
+            dependency["Hash"] = dll_hash
+
         return {"Metadata": metadata, "Dependencies": dependencies, "Vulnerabilities": vulnerabilities}
 
     except Exception as e:
@@ -42,19 +59,25 @@ def analyze_pe_file(file_path):
 
 def query_nvd_api(dll_name):
     try:
+        # proxy_server = "http://192.168.140.2:3128" 
+
+        # proxies = {
+        #     "http": proxy_server,
+        #     "https": proxy_server
+        # }
+
         url = f"https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch={dll_name}"
         print("Querying NVD API for:", dll_name)  
 
-        response = requests.get(url)
-        if response.status_code == 200:
-            data = response.json()
-            vulnerabilities = [{"CVE_ID": entry["cve"]["CVE_data_meta"]["ID"]} for entry in data["result"]["CVE_Items"]]
-            print("Vulnerabilities found for", dll_name, ":", vulnerabilities)  
-            return vulnerabilities
-        else:
-            print("No vulnerabilities found for", dll_name) 
-            return []
-    except Exception as e:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()  
+        data = response.json()
+        vulnerabilities = data.get("vulnerabilities", [])
+        if not vulnerabilities:
+            vulnerabilities = data.get("result", {}).get("CVE_Items", [])
+        time.sleep(1)
+        return vulnerabilities
+    except requests.exceptions.RequestException as e:
         print(f"Error querying NVD API for {dll_name}: {e}")
         return []
 
