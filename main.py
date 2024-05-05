@@ -50,7 +50,7 @@ def analyze_pe_file(file_path):
             # Calculate hash of the DLL
             dll_file_path = os.path.join(os.path.dirname(file_path), dll_name)
             # dll_hash = calculate_hash(dll_file_path)
-            dependency["Hash"] = dll_hash
+            # dependency["Hash"] = dll_hash
 
         return {"Metadata": metadata, "Dependencies": dependencies, "Vulnerabilities": vulnerabilities}
 
