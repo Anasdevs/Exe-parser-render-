@@ -11,13 +11,13 @@ print("EXE PARSER")
 
 import hashlib
 
-def calculate_hash(file_path):
-    """Calculate the SHA256 hash of a file."""
-    sha256_hash = hashlib.sha256()
-    with open(file_path, "rb") as f:
-        for byte_block in iter(lambda: f.read(4096), b""):
-            sha256_hash.update(byte_block)
-    return sha256_hash.hexdigest()
+# def calculate_hash(file_path):
+#     """Calculate the SHA256 hash of a file."""
+#     sha256_hash = hashlib.sha256()
+#     with open(file_path, "rb") as f:
+#         for byte_block in iter(lambda: f.read(4096), b""):
+#             sha256_hash.update(byte_block)
+#     return sha256_hash.hexdigest()
 
 
 def analyze_pe_file(file_path):
@@ -49,7 +49,7 @@ def analyze_pe_file(file_path):
 
             # Calculate hash of the DLL
             dll_file_path = os.path.join(os.path.dirname(file_path), dll_name)
-            dll_hash = calculate_hash(dll_file_path)
+            # dll_hash = calculate_hash(dll_file_path)
             dependency["Hash"] = dll_hash
 
         return {"Metadata": metadata, "Dependencies": dependencies, "Vulnerabilities": vulnerabilities}
