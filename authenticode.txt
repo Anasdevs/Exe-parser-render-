@@ -1,0 +1,20 @@
+$file = "tbb.dll"
+$signature = Get-AuthenticodeSignature -FilePath $file
+
+if ($signature.Status -eq "Valid") {
+    Write-Output "The signature of $file is valid."
+} else {
+    Write-Output "The signature of $file is not valid or could not be verified."
+}
+
+
+$file = "ChromeSetup.exe"
+$signature = Get-AuthenticodeSignature -FilePath $file
+
+if ($signature.Status -eq "Valid") {
+    Write-Output "The signature of $file is valid."
+} elseif ($signature.Status -eq "NotSigned") {
+    Write-Output "The file $file is not signed."
+} else {
+    Write-Output "The signature of $file is not valid or could not be verified."
+}
