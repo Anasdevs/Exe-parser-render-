@@ -10,9 +10,10 @@ app = Flask(__name__)
 
 print("EXE PARSER")
 
+
 def extract_version_info(pe):
     version_info = {}
-    if hasattr(pe, 'VS_FIXEDFILEINFO'):
+    if hasattr(pe, 'VS_FIXEDFILEINFO') and pe.VS_FIXEDFILEINFO:
         fixed_file_info = pe.VS_FIXEDFILEINFO[0]
         version_info['FileVersion'] = "{}.{}.{}.{}".format(
             (fixed_file_info.FileVersionMS >> 16) & 0xFFFF,
@@ -27,20 +28,21 @@ def extract_version_info(pe):
             fixed_file_info.ProductVersionLS & 0xFFFF
         )
 
-    if hasattr(pe, 'FileInfo'):
+    if hasattr(pe, 'FileInfo') and pe.FileInfo:
         for fileinfo in pe.FileInfo:
-            if fileinfo.Key == 'StringFileInfo':
+            if hasattr(fileinfo, 'Key') and fileinfo.Key == 'StringFileInfo':
                 for st in fileinfo.StringTable:
                     for entry in st.entries.items():
                         version_info[entry[0]] = entry[1]
 
     return version_info
 
+
 def filter_vulnerabilities(vulnerabilities, version_info, functions):
     filtered_vulnerabilities = []
     product_name = version_info.get('ProductName', '').lower()
     company_name = version_info.get('CompanyName', '').lower()
-    
+
     for vuln in vulnerabilities:
         description = vuln.get('cve', {}).get('description', {}).get('description_data', [])
         for desc in description:
@@ -51,6 +53,7 @@ def filter_vulnerabilities(vulnerabilities, version_info, functions):
                 break
 
     return filtered_vulnerabilities
+
 
 def analyze_pe_file(file_path):
     try:
@@ -94,6 +97,7 @@ def analyze_pe_file(file_path):
     except Exception as e:
         return {"Error": str(e)}
 
+
 def verify_digital_signature(file_path):
     try:
         # Run osslsigncode to verify digital signature
@@ -110,6 +114,7 @@ def verify_digital_signature(file_path):
         print(f"Error verifying digital signature: {e}")
         return "Verification failed"
 
+
 def query_nvd_api(dll_name):
     try:
         url = f"https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch={dll_name}"
@@ -125,6 +130,7 @@ def query_nvd_api(dll_name):
     except requests.exceptions.RequestException as e:
         print(f"Error querying NVD API for {dll_name}: {e}")
         return []
+
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
