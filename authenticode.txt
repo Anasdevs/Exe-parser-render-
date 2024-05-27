@@ -8,7 +8,7 @@ if ($signature.Status -eq "Valid") {
 }
 
 
-$file = "ChromeSetup.exe"
+$file = "testexe.exe"
 $signature = Get-AuthenticodeSignature -FilePath $file
 
 if ($signature.Status -eq "Valid") {

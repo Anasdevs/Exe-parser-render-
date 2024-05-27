@@ -1,59 +1,12 @@
-from flask import Flask, request, jsonify
 import os
 import pefile
 import requests
-import uuid
-import time
+import json
 import subprocess
+import re
+from flask import Flask, request, jsonify
 
 app = Flask(__name__)
-
-print("EXE PARSER")
-
-
-def extract_version_info(pe):
-    version_info = {}
-    if hasattr(pe, 'VS_FIXEDFILEINFO') and pe.VS_FIXEDFILEINFO:
-        fixed_file_info = pe.VS_FIXEDFILEINFO[0]
-        version_info['FileVersion'] = "{}.{}.{}.{}".format(
-            (fixed_file_info.FileVersionMS >> 16) & 0xFFFF,
-            fixed_file_info.FileVersionMS & 0xFFFF,
-            (fixed_file_info.FileVersionLS >> 16) & 0xFFFF,
-            fixed_file_info.FileVersionLS & 0xFFFF
-        )
-        version_info['ProductVersion'] = "{}.{}.{}.{}".format(
-            (fixed_file_info.ProductVersionMS >> 16) & 0xFFFF,
-            fixed_file_info.ProductVersionMS & 0xFFFF,
-            (fixed_file_info.ProductVersionLS >> 16) & 0xFFFF,
-            fixed_file_info.ProductVersionLS & 0xFFFF
-        )
-
-    if hasattr(pe, 'FileInfo') and pe.FileInfo:
-        for fileinfo in pe.FileInfo:
-            if hasattr(fileinfo, 'Key') and fileinfo.Key == 'StringFileInfo':
-                for st in fileinfo.StringTable:
-                    for entry in st.entries.items():
-                        version_info[entry[0]] = entry[1]
-
-    return version_info
-
-
-def filter_vulnerabilities(vulnerabilities, version_info, functions):
-    filtered_vulnerabilities = []
-    product_name = version_info.get('ProductName', '').lower()
-    company_name = version_info.get('CompanyName', '').lower()
-
-    for vuln in vulnerabilities:
-        description = vuln.get('cve', {}).get('description', {}).get('description_data', [])
-        for desc in description:
-            desc_text = desc['value'].lower()
-            if product_name in desc_text or company_name in desc_text:
-                vulnerable_functions = [func for func in functions if func.lower() in desc_text]
-                filtered_vulnerabilities.append({"Vulnerability": vuln, "Vulnerable_Functions": vulnerable_functions})
-                break
-
-    return filtered_vulnerabilities
-
 
 def analyze_pe_file(file_path):
     try:
@@ -68,97 +21,102 @@ def analyze_pe_file(file_path):
             "Image_Base": hex(pe.OPTIONAL_HEADER.ImageBase)
         }
 
-        # Extract version info
-        version_info = extract_version_info(pe)
-        metadata.update(version_info)
-
         # Verify digital signature
-        signature_status = verify_digital_signature(file_path)
+        print("Verifying digital signature...")
+        signature_status, publisher = verify_digital_signature(file_path)
         metadata["Digital_Signature"] = signature_status
+        metadata["Publisher"] = publisher
+        print(f"Digital Signature Status: {signature_status}")
+        print(f"Publisher: {publisher}")
 
+        # Get DLLs and functions
         dependencies = []
-
-        # Analyze the import table
         for entry in pe.DIRECTORY_ENTRY_IMPORT:
             dll_name = entry.dll.decode('utf-8').lower()
-            functions = [imp.name.decode('utf-8') if imp.name else "Ordinal {}".format(imp.ordinal) for imp in entry.imports]
+            functions = [imp.name.decode('utf-8') if imp.name else f"Ordinal {imp.ordinal}" for imp in entry.imports]
             dependencies.append({"DLL": dll_name, "Functions": functions})
+        print("Extracted DLLs and Functions:")
 
+        # Query NVD API for vulnerabilities
         vulnerabilities = []
         for dependency in dependencies:
             dll_name = dependency["DLL"]
-            functions = dependency["Functions"]
-            vulnerability_info = query_nvd_api(dll_name)
-            filtered_vulns = filter_vulnerabilities(vulnerability_info, version_info, functions)
-            vulnerabilities.append({"DLL": dll_name, "Vulnerabilities": filtered_vulns})
-
+            print(f"Querying NVD API for vulnerabilities related to {dll_name}...")
+            cve_items = query_cve_items_for_dll(dll_name)
+            print(f"Found {len(cve_items)} CVE items for {dll_name}")
+            affected_resources = extract_affected_resources(cve_items, dependency["Functions"])
+            if affected_resources:
+                vulnerabilities.append({"DLL": dll_name, "Affected_Resources": affected_resources})
+            else:
+                print(f"No affected resources found for {dll_name}")
+        
+        print("Analysis completed successfully.")
         return {"Metadata": metadata, "Dependencies": dependencies, "Vulnerabilities": vulnerabilities}
 
     except Exception as e:
+        print(f"Error analyzing PE file: {e}")
         return {"Error": str(e)}
-
 
 def verify_digital_signature(file_path):
     try:
-        # Run osslsigncode to verify digital signature
-        result = subprocess.run(['osslsigncode', 'verify', file_path], capture_output=True, text=True)
-        output = result.stdout
+        ps_command = f"powershell.exe -Command \"& {{$file = '{file_path}'; $signature = Get-AuthenticodeSignature -FilePath $file; if ($signature.Status -eq 'Valid') {{ 'Valid' }} elseif ($signature.Status -eq 'NotSigned') {{ 'NotSigned' }} else {{ 'Invalid' }}; $signature.SignerCertificate.Subject}}\""
+        result = subprocess.run(ps_command, capture_output=True, text=True, shell=True)
 
-        # Check if "Signature verified successfully" is present in the output
-        if "Signature verified successfully" in output:
-            return "Valid"
-        else:
-            return "Invalid"
+        if result.returncode != 0:
+            print(f"PowerShell error: {result.stderr}")
+            return "Verification failed", None
+
+        output_lines = result.stdout.splitlines()
+        signature_status = output_lines[0].strip()
+        publisher = output_lines[1].strip()
+        return signature_status, publisher
 
     except Exception as e:
         print(f"Error verifying digital signature: {e}")
-        return "Verification failed"
+        return "Verification failed", None
 
-
-def query_nvd_api(dll_name):
+def query_cve_items_for_dll(dll_name):
     try:
-        url = f"https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch={dll_name}"
-        print("Querying NVD API for:", dll_name)
-        response = requests.get(url, timeout=10)
+        url = f"https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch={dll_name}&resultsPerPage=10"
+        print(f"URL IS: {url}")
+        response = requests.get(url)
         response.raise_for_status()
         data = response.json()
-        vulnerabilities = data.get("vulnerabilities", [])
-        if not vulnerabilities:
-            vulnerabilities = data.get("result", {}).get("CVE_Items", [])
-        time.sleep(1)
-        return vulnerabilities
-    except requests.exceptions.RequestException as e:
-        print(f"Error querying NVD API for {dll_name}: {e}")
+        return data.get("vulnerabilities", [])
+    except Exception as e:
+        print(f"Error querying NVD API for DLL {dll_name}: {e}")
         return []
 
+def extract_affected_resources(cve_items, functions):
+    try:
+        affected_resources = []
+        for cve_item in cve_items:
+            description = cve_item.get("cve", {}).get("descriptions", [{}])[0].get("value", "").lower()
+            matches = re.findall(r'\bin\b ([^.,;]+)', description)
+            for match in matches:
+                if any(func.lower() in match for func in functions):
+                    affected_resources.append(match)
+        return affected_resources
+
+    except Exception as e:
+        print(f"Error extracting affected resources: {e}")
+        return []
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
-    try:
-        if 'file' not in request.files:
-            return jsonify({"Error": "No file part"})
+    if 'file' not in request.files:
+        return jsonify({"error": "No file part"}), 400
 
-        file = request.files['file']
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"error": "No selected file"}), 400
 
-        if file.filename == '':
-            return jsonify({"Error": "No selected file"})
+    file_path = os.path.join("/tmp", file.filename)
+    file.save(file_path)
 
-        if file:
-            # Generate a unique filename using UUID
-            unique_filename = str(uuid.uuid4()) + ".exe"
-            file_path = os.path.join("uploads", unique_filename)
-
-            file.save(file_path)
-
-            result = analyze_pe_file(file_path)
-
-            if os.path.exists(file_path):
-                os.remove(file_path)
-
-            return jsonify(result)
-
-    except Exception as e:
-        return jsonify({"Error": str(e)})
+    result = analyze_pe_file(file_path)
+    os.remove(file_path)
+    return jsonify(result)
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=8080)
